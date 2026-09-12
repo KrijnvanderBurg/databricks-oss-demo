@@ -1,0 +1,114 @@
+{
+  "realm": "lakehouse",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "groups": [
+    {
+      "name": "data-engineers",
+      "path": "/data-engineers"
+    },
+    {
+      "name": "lakehouse-admins",
+      "path": "/lakehouse-admins"
+    }
+  ],
+  "users": [
+    {
+      "username": "pietje",
+      "enabled": true,
+      "firstName": "Pietje",
+      "lastName": "Puk",
+      "email": "pietje@lakehouse.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "pietje123",
+          "temporary": false
+        }
+      ],
+      "groups": ["/data-engineers"]
+    },
+    {
+      "username": "alice",
+      "enabled": true,
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "email": "alice@lakehouse.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice123",
+          "temporary": false
+        }
+      ],
+      "groups": ["/lakehouse-admins"]
+    },
+    {
+      "username": "service-account-data-eng-pipeline",
+      "enabled": true,
+      "serviceAccountClientId": "data-eng-pipeline",
+      "groups": ["/data-engineers"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "lakehouse-client",
+      "name": "Lakehouse client (Unity Catalog + SeaweedFS S3)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "lakehouse-client-secret",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "data-eng-pipeline",
+      "name": "Data engineering pipeline (service account, no human owner)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "data-eng-pipeline-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}
