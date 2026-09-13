@@ -1,0 +1,301 @@
+# Worker template that will be reused
+x-spark-worker-template: &spark-worker-template
+  image: apache/spark:4.1.3
+  command: "/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+  environment:
+    - SPARK_PUBLIC_DNS=localhost  # For UI URLs to be accessible from host
+    - SPARK_LOCAL_IP=0.0.0.0
+  volumes:
+    - spark-logs:/opt/spark/logs
+    - spark-events:/opt/spark/events
+    - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+  networks:
+    - spark-network
+  depends_on:
+    - spark-master
+  restart: unless-stopped
+
+services:
+  # Keycloak - identity provider (realm, groups and clients imported at startup)
+  # Admin console: http://localhost:8180 (admin/admin)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.3
+    container_name: keycloak
+    hostname: keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HEALTH_ENABLED=true
+      # Pin the issuer to the internal hostname so tokens are valid for Unity
+      # Catalog's server.allowed-issuers regardless of which host/port (e.g.
+      # localhost:8180 from a script) a client used to reach Keycloak.
+      - KC_HOSTNAME=http://keycloak:8080
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "8180:8080"
+    networks:
+      - spark-network
+    # No curl/wget in the image; probe the management (health) port with bash.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  # Unity Catalog Server (metadata persisted to a named volume via the built-in store)
+  unity-catalog:
+    image: unitycatalog/unitycatalog:v0.6.0
+    container_name: unity-catalog
+    hostname: unity-catalog
+    ports:
+      - "8080:8080"
+    environment:
+      - JAVA_OPTS=-Xmx2g
+    volumes:
+      - uc-logs:/home/unitycatalog/etc/logs
+      - uc-data:/home/unitycatalog/etc/data
+      # etc/conf holds the server-generated admin token + signing keys; kept
+      # on a volume so 02-create-unity-catalog-users.sh can read it via
+      # `docker compose exec`.
+      - uc-conf:/home/unitycatalog/etc/conf
+      - ./uc/server.properties:/home/unitycatalog/etc/conf/server.properties:ro
+    networks:
+      - spark-network
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    # The runtime image is Alpine with bash but no curl, so probe the port with bash.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # Unity Catalog Web UI - built from source
+  unity-catalog-ui:
+    build:
+      context: https://github.com/unitycatalog/unitycatalog.git#main:ui
+      dockerfile: Dockerfile
+      # PROXY_HOST is baked into the UI at build time (jq rewrites package.json),
+      # so it must be a build arg, not a runtime env var. Default is "server".
+      args:
+        - PROXY_HOST=unity-catalog
+    container_name: unity-catalog-ui
+    hostname: unity-catalog-ui
+    ports:
+      - "3000:3000"
+    networks:
+      - spark-network
+    depends_on:
+      unity-catalog:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Spark client - the only place spark-submit runs from. Kept as a plain
+  # "sleep infinity" container (no custom image) so scripts can `docker
+  # compose exec` into it; there is no notebook/IDE tooling here on purpose.
+  spark-client:
+    image: apache/spark:4.1.3
+    # the image's default non-root user can't write to the spark-events volume
+    user: root
+    container_name: spark-client
+    hostname: spark-client
+    command: ["sleep", "infinity"]
+    environment:
+      - SPARK_LOCAL_IP=0.0.0.0
+    volumes:
+      - ./04-spark-job.py:/opt/spark-apps/04-spark-job.py:ro
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - spark-events:/opt/spark/events
+    networks:
+      - spark-network
+    depends_on:
+      unity-catalog:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+  spark-master:
+    image: apache/spark:4.1.3
+    command: "/opt/spark/bin/spark-class org.apache.spark.deploy.master.Master"
+    hostname: spark-master
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8082
+      - SPARK_PUBLIC_DNS=localhost  # For UI URLs to be accessible from host
+      - SPARK_LOCAL_IP=0.0.0.0
+    ports:
+      - "8082:8082"   # Web UI
+      - "7077:7077"   # Spark master port
+    volumes:
+      - spark-logs:/opt/spark/logs
+      - spark-events:/opt/spark/events
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    networks:
+      - spark-network
+    depends_on:
+      unity-catalog:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Worker 1 inherits from template
+  spark-worker-1:
+    <<: *spark-worker-template
+    hostname: spark-worker-1
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_WEBUI_PORT=8083
+      - SPARK_PUBLIC_DNS=localhost
+    ports:
+      - "8083:8083"   # Worker 1 UI
+
+  # Worker 2 inherits from template
+  spark-worker-2:
+    <<: *spark-worker-template
+    hostname: spark-worker-2
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_WEBUI_PORT=8084
+      - SPARK_PUBLIC_DNS=localhost
+    ports:
+      - "8084:8084"   # Worker 2 UI
+
+  # History server has no dependencies - keeps running independently
+  spark-history-server:
+    image: apache/spark:4.1.3
+    # spark-client (the only writer) runs as root, and its event log dirs
+    # come out mode 770 root:root - non-root can't even read them.
+    user: root
+    command: "/opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer"
+    hostname: spark-history
+    environment:
+      - SPARK_PUBLIC_DNS=localhost
+      - SPARK_LOCAL_IP=0.0.0.0
+    ports:
+      - "18080:18080"   # History UI
+    volumes:
+      - spark-logs:/opt/spark/logs
+      - spark-events:/opt/spark/events
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+  # SeaweedFS - distributed object storage
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:4.46
+    hostname: seaweedfs-master
+    container_name: seaweedfs-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    # Must advertise a cluster-resolvable address, not localhost, or clients
+    # (weed shell, filer redirects) are pointed at themselves.
+    command: 'master -ip=seaweedfs-master -ip.bind=0.0.0.0'
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:4.46
+    hostname: seaweedfs-volume
+    container_name: seaweedfs-volume
+    ports:
+      - "28080:8080"
+      - "28081:18080"
+    command: 'volume -ip=seaweedfs-volume -master="seaweedfs-master:9333" -ip.bind=0.0.0.0 -port=8080 -publicUrl=http://localhost:28080'
+    depends_on:
+      - seaweedfs-master
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:4.46
+    hostname: seaweedfs-filer
+    container_name: seaweedfs-filer
+    ports:
+      - "28888:8888"
+      - "28889:18888"
+    command: 'filer -ip=seaweedfs-filer -master="seaweedfs-master:9333" -ip.bind=0.0.0.0'
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+  seaweedfs-s3:
+    image: chrislusf/seaweedfs:4.46
+    hostname: seaweedfs-s3
+    container_name: seaweedfs-s3
+    ports:
+      - "28333:8333"
+    # -config: static identity for UC credential vending (anonymous access is
+    # thereby denied). -iam.config: Keycloak OIDC + STS for user credentials.
+    command: 's3 -filer="seaweedfs-filer:8888" -ip.bind=0.0.0.0 -config=/etc/seaweedfs/identities.json -iam.config=/etc/seaweedfs/iam.json'
+    volumes:
+      - ./seaweedfs:/etc/seaweedfs:ro
+    depends_on:
+      seaweedfs-master:
+        condition: service_started
+      seaweedfs-volume:
+        condition: service_started
+      seaweedfs-filer:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+  seaweedfs-webdav:
+    image: chrislusf/seaweedfs:4.46
+    hostname: seaweedfs-webdav
+    container_name: seaweedfs-webdav
+    ports:
+      - "7333:7333"
+    command: 'webdav -filer="seaweedfs-filer:8888" -ip.bind=0.0.0.0'
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume
+      - seaweedfs-filer
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+  seaweedfs-admin:
+    image: chrislusf/seaweedfs:4.46
+    hostname: seaweedfs-admin
+    container_name: seaweedfs-admin
+    ports:
+      - "23646:23646"
+    command: 'admin -master=seaweedfs-master:9333'
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume
+      - seaweedfs-filer
+    networks:
+      - spark-network
+    restart: unless-stopped
+
+networks:
+  spark-network:
+    driver: bridge
+
+volumes:
+  spark-logs:
+  spark-events:
+  uc-data:
+  uc-logs:
+  uc-conf:
