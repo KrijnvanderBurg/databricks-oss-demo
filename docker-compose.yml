@@ -110,7 +110,7 @@ services:
     environment:
       - SPARK_LOCAL_IP=0.0.0.0
     volumes:
-      - ./04-spark-job.py:/opt/spark-apps/04-spark-job.py:ro
+      - ./spark-job.py:/opt/spark-apps/spark-job.py:ro
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - spark-events:/opt/spark/events
     networks:

@@ -11,7 +11,7 @@ KC="http://localhost:8180"
 UC_URL="http://localhost:8080"
 
 # Keycloak password grant (alice is a real person at a keyboard) -> Unity
-# Catalog token exchange, same pattern as 04-run-spark-job.sh.
+# Catalog token exchange, same pattern as 04-run-spark-job-with-auth.sh.
 ALICE_ID_TOKEN=$(curl -sf -X POST "${KC}/realms/lakehouse/protocol/openid-connect/token" \
   -d grant_type=password -d client_id=lakehouse-client -d client_secret=lakehouse-client-secret \
   -d username=alice -d password=alice123 -d scope="openid profile email" | jq -r .id_token)

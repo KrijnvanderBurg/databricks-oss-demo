@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Submits 04-spark-job.py to the Spark cluster, authenticated as
+# Submits spark-job.py to the Spark cluster, authenticated as
 # the data-eng-pipeline service account (Keycloak client-credentials grant,
 # never tied to one team member). The job creates a schema in Unity Catalog
 # and writes + reads back a Delta table on SeaweedFS, proving both the
 # governance (UC) and storage (S3) auth paths work end to end. Run after
 # 03-create-catalog.sh.
 #
-#   ./04-run-spark-job.sh
+#   ./04-run-spark-job-with-auth.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -38,4 +38,4 @@ docker compose exec -T spark-client /opt/spark/bin/spark-submit \
   --conf spark.hadoop.fs.s3a.access.key="${S3_ACCESS_KEY}" \
   --conf spark.hadoop.fs.s3a.secret.key="${S3_SECRET_KEY}" \
   --conf spark.hadoop.fs.s3a.session.token="${S3_SESSION_TOKEN}" \
-  /opt/spark-apps/04-spark-job.py
+  /opt/spark-apps/spark-job.py

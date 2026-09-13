@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Negative-path smoke test: proves nothing works without authentication.
 # Checks Unity Catalog and SeaweedFS S3 directly, then submits the exact same
-# Spark job as 04-run-spark-job.sh but with zero credentials attached.
+# Spark job as 04-run-spark-job-with-auth.sh but with zero credentials attached.
 #
-#   ./05-verify-auth-required.sh
+#   ./05-run-spark-job-without-auth.sh
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -21,4 +21,4 @@ curl -s -o /dev/null -w '%{http_code}\n' -X PUT -d "unauthorized" "${S3_URL}/lak
 
 echo "Submitting the same Spark job WITHOUT any credentials (expect it to fail):"
 docker compose exec -T spark-client /opt/spark/bin/spark-submit \
-  --master "spark://spark-master:7077" /opt/spark-apps/04-spark-job.py
+  --master "spark://spark-master:7077" /opt/spark-apps/spark-job.py
